@@ -26,7 +26,8 @@ from crispy_forms.layout import Layout, Field, Div
 from django import forms
 from django.utils.translation import ugettext_lazy as _
 
-from weblate.utils.validators import validate_render
+from weblate.trans.formats import FILE_FORMAT_CHOICES
+from weblate.utils.validators import validate_render, validate_re
 
 
 class BaseAddonForm(forms.Form):
@@ -96,3 +97,97 @@ class JSONCustomizeForm(BaseAddonForm):
         initial=4,
         required=True,
     )
+
+
+class DiscoveryForm(BaseAddonForm):
+    match = forms.CharField(
+        label=_('Regular expression to match translation files'),
+        required=True,
+    )
+    file_format = forms.ChoiceField(
+        label=_('File format'),
+        choices=FILE_FORMAT_CHOICES,
+        initial='auto',
+        required=True,
+        help_text=_(
+            'Automatic detection might fail for some formats '
+            'and is slightly slower.'
+        ),
+    )
+    name_template = forms.CharField(
+        label=_('Customise the component name'),
+        initial='{{ component }}',
+        required=True,
+    )
+    base_file_template = forms.CharField(
+        label=_('Define the monolingual base filename'),
+        initial='',
+        required=False,
+        help_text=_('Keep empty for bilingual translation files.'),
+    )
+    remove = forms.BooleanField(
+        label=_('Remove components for non existing files'),
+        required=False
+    )
+    confirm = forms.BooleanField(
+        label=_('Please review the above matches and confirm the selection'),
+        required=False
+    )
+    preview = forms.BooleanField(
+        required=False,
+        widget=forms.HiddenInput,
+    )
+
+    def __init__(self, *args, **kwargs):
+        super(DiscoveryForm, self).__init__(*args, **kwargs)
+        self.helper = FormHelper(self)
+        self.helper.layout = Layout(
+            Field('match'),
+            Field('file_format'),
+            Field('name_template'),
+            Field('base_file_template'),
+            Field('remove'),
+            Field('preview'),
+            Div(template='addons/discovery_help.html'),
+        )
+        if self.is_bound:
+            # Here we do not care about result
+            self.is_valid()
+            if self.cleaned_data['show_preview']:
+                self.helper.layout.insert(
+                    0,
+                    Field('confirm'),
+                )
+                self.helper.layout.insert(
+                    0,
+                    Div(template='addons/discovery_preview.html'),
+                )
+
+    def clean(self):
+        self.cleaned_data['show_preview'] = self.cleaned_data['preview']
+        if self.cleaned_data['preview']:
+            if not self.cleaned_data['confirm']:
+                raise forms.ValidationError(
+                    _('Please confirm matched components.')
+                )
+            self.cleaned_data['preview'] = False
+            self.cleaned_data['confirm'] = False
+        else:
+            self.cleaned_data['preview'] = True
+            self.cleaned_data['confirm'] = False
+
+    def clean_match(self):
+        match = self.cleaned_data['match']
+        validate_re(match, ('component', 'language'))
+        return match
+
+    def test_render(self, value):
+        validate_render(value, component='test')
+
+    def clean_name_template(self):
+        self.test_render(self.cleaned_data['name_template'])
+        return self.cleaned_data['name_template']
+
+    def clean_base_file_template(self):
+        self.test_render(self.cleaned_data['base_file_template'])
+        return self.cleaned_data['base_file_template']
